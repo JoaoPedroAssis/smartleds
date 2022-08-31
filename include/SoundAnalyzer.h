@@ -5,6 +5,7 @@
 
 #define NUM_BANDS 16
 #define SAMPLES 1024
+#define BUFFER_SIZE 4
 #define SAMPLING_FREQUENCY 44100
 #define NOISE 500
 
@@ -21,20 +22,6 @@ class SoundAnalyzer {
         float * peaks;
         arduinoFFT _FFT;
         float amplitude = 200.0;
-
-    public:
-
-        SoundAnalyzer() {
-            vReal = (double *) malloc(SAMPLES * sizeof(vReal[0]));
-            vImag = (double *) malloc(SAMPLES * sizeof(vImag[0]));
-            peaks = (float *)  malloc(NUM_BANDS * sizeof(peaks[0]));
-        }
-
-        ~SoundAnalyzer() {
-            free(vReal);
-            free(vImag);
-            free(peaks);
-        }
 
         void FFT() {
             _FFT.Windowing(vReal, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
@@ -115,26 +102,31 @@ class SoundAnalyzer {
                     peaks[getBand(i)] = (int) vReal[i];
                 }
             }
-
-            // Serial.print("Raws:  ");
-            // for (int i = 0; i < NUM_BANDS; i++)
-            // {
-            //     Serial.printf("%8.1f, ", peaks[i]);
-            // }
-		    // Serial.println("");
         }
 
-        int getPeak(const uint8_t * data) {
-            int byte_offset = 0;
-            int16_t l_sample, r_sample;
-            for (int i = 0; i < SAMPLES; i++) {
-                l_sample = (int16_t)(((*(data + byte_offset + 1) << 8) | *(data + byte_offset)));
-                r_sample = (int16_t)(((*(data + byte_offset + 3) << 8) | *(data + byte_offset + 2)));
+    public:
 
-                vReal[i] = (l_sample + r_sample) / 2.0f;
+        SoundAnalyzer() {
+            vReal = (double *) malloc(SAMPLES * sizeof(vReal[0]));
+            vImag = (double *) malloc(SAMPLES * sizeof(vImag[0]));
+            peaks = (float *)  malloc(NUM_BANDS * sizeof(peaks[0]));
+        }
+
+        ~SoundAnalyzer() {
+            free(vReal);
+            free(vImag);
+            free(peaks);
+        }
+
+        // Copies the sample_data into vReal array and clears vImag
+        void setData(const double* sample_data) {
+            memcpy(vReal, sample_data, SAMPLES * sizeof(double));
+            for (int i = 0; i < SAMPLES; i++) {
                 vImag[i] = 0.0;
-                byte_offset = byte_offset + 4;
             }
+        }
+        
+        int getPeak() {
 
             FFT();
             createBands();
@@ -148,7 +140,6 @@ class SoundAnalyzer {
                 }
             }
 
-            // Serial.println(max_peak_idx);
             return max_peak_idx;
         }
 };
