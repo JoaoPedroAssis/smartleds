@@ -1,12 +1,10 @@
 #include <Arduino.h>
 #include "BluetoothA2DPSink.h"
 #include <FastLED.h>
-#include <arduinoFFT.h>
-#include <stdint.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/stream_buffer.h>
-
-#include "../include/SoundAnalyzer.h"
+#include <freertos/ringbuf.h>
+#include "../include/FFT_Class.h"
 
 // LED settings
 #define NUM_LEDS 60
@@ -16,100 +14,157 @@
 // FFT
 #define NUM_BANDS 16
 #define SAMPLES 1024
-#define TRIMMED_SAMPLES 256
+#define TRIMMED_SAMPLES 128
 #define SAMPLING_FREQUENCY 44100
 #define NOISE 500
 
+// StreamBuffer
 #define BUFFER_SIZE 4
+#define BUFFER_SLOT 128
+#define BUFFER_TRIGGER 1
 
+
+/* --------- VARIABLES ----------- */
+
+// LED STUFF
 CRGB leds[NUM_LEDS];
+uint8_t idx;
+CRGBPalette16 purplePalette = CRGBPalette16 (
+    CRGB::DarkViolet,
+    CRGB::DarkViolet,
+    CRGB::DarkViolet,
+    CRGB::DarkViolet,
+    
+    CRGB::Magenta,
+    CRGB::Magenta,
+    CRGB::Linen,
+    CRGB::Linen,
+    
+    CRGB::Magenta,
+    CRGB::Magenta,
+    CRGB::DarkViolet,
+    CRGB::DarkViolet,
 
-DEFINE_GRADIENT_PALETTE( greenblue_gp ) { 
-  0,   0,  255, 245,
-  46,  0,  21,  255,
-  179, 12, 250, 0,
-  255, 0,  255, 245
-};
-CRGBPalette16 greenblue = greenblue_gp;
+    CRGB::DarkViolet,
+    CRGB::DarkViolet,
+    CRGB::Linen,
+    CRGB::Linen
+);
+
+// BLUETOOTH STUFF
 BluetoothA2DPSink a2dp_sink;
-StreamBufferHandle_t sample_buffer;
-SoundAnalyzer *sound_analyzer;
+int cont = 0;
 
-double *tmp_buffer;
+// BUFFERs
+RingbufHandle_t sample_buffer;
+float *blt_output_buffer, *fft_input_buffer;
 
-void read_data_stream(const uint8_t *data, uint32_t length) { 
-  int16_t l_sample, r_sample;
-  int byte_offset, idx = 0;
-  size_t buffer_byte_size = TRIMMED_SAMPLES * sizeof(double);
+
+void read_data_stream(const uint8_t *data, uint32_t length) {
+  // Serial.printf("UM PACOTE CHEGOU! SIZE: %d\n", length);
+  cont++;
+
+  int16_t *values = (int16_t*) data;
+
+  int buff_idx = 0;
+  float mean = 0;
+  size_t buffer_bytes_to_send = SAMPLES * sizeof(float);
   size_t bytes_sent;
-
-  for (int i = 0; i < SAMPLES; i += 4) {
-    l_sample = (int16_t)(((*(data + byte_offset + 1) << 8) | *(data + byte_offset)));
-    r_sample = (int16_t)(((*(data + byte_offset + 3) << 8) | *(data + byte_offset + 2)));
-
-    tmp_buffer[idx] = (l_sample + r_sample) / 2.0f;
-    byte_offset = byte_offset + 16;
-    idx++;
+  for (int i = 0; i < SAMPLES * 2; i+=2) {
+    blt_output_buffer[buff_idx] = (values[i] + values[i+1]) /2.0f;
+    mean += blt_output_buffer[buff_idx];
+    buff_idx++;
   }
 
-  // Serial.printf("    IDX FINAL: %d\n", idx);
+  mean /= (float) SAMPLES; 
 
-  bytes_sent = xStreamBufferSend(sample_buffer, tmp_buffer, buffer_byte_size, 0);
-  if (bytes_sent != buffer_byte_size) {
-    Serial.printf("Nem todos os bytes foram enviados!: %d\n", xPortGetCoreID());
+  Serial.printf("NUMERO: %.2f %.2f %.2f | MEAN: %.2f\n", blt_output_buffer[0], blt_output_buffer[1], blt_output_buffer[2], mean);
+
+  // Serial.printf("NUMERO: %.3f\n", max);
+  UBaseType_t res =  xRingbufferSend(sample_buffer, blt_output_buffer, buffer_bytes_to_send, pdMS_TO_TICKS(1000));
+  if (res != pdTRUE) {
+    Serial.printf("                                       NAO ENVIOU!\n");
   } else {
-    Serial.printf("Todos os bytes foram enviados!: %d\n", xPortGetCoreID());
+    Serial.printf("ENVIOU!\n");
   }
 }
 
 void calculateFFT(void *parameters) {
   size_t bytes_received;
-  size_t buffer_byte_size = TRIMMED_SAMPLES * BUFFER_SIZE * sizeof(double);
-  double *fft_buffer = (double*) malloc(buffer_byte_size);
-  while (1) {
-    bytes_received = xStreamBufferReceive(sample_buffer, fft_buffer, buffer_byte_size, portMAX_DELAY);
+  size_t buffer_bytes_to_receive = SAMPLES * BUFFER_TRIGGER * sizeof(float);
 
-    if (bytes_received != buffer_byte_size) {
-      Serial.printf("Nem todos os bytes foram recebidos!: %d\n", xPortGetCoreID());
+  while (1) {
+    // bytes_received = xStreamBufferReceive(sample_buffer, fft_input_buffer, buffer_bytes_to_receive, portMAX_DELAY);
+    size_t tam;   
+    fft_input_buffer = (float *) xRingbufferReceive(sample_buffer, &tam, portMAX_DELAY);
+
+    //Check received item
+    if (fft_input_buffer != NULL) {
+      vRingbufferReturnItem(sample_buffer, (void *) fft_input_buffer);
+      Serial.printf("RECEBEU! | SIZE: %d\n", tam);
     } else {
-      Serial.printf("Todos os bytes foram recebidos!: %d\n", xPortGetCoreID());
+        //Failed to receive item
+        Serial.printf("NAO RECEBEU!\n");
+        continue;
     }
 
-    sound_analyzer->setData(fft_buffer);
-    // int max_peak = sound_analyzer->getPeak();
+    float mean = 0;
+    for (int i = 0; i < SAMPLES; i++) {
+      mean += fft_input_buffer[i];
+    }
 
-    // Serial.printf("                                   PEAK: %d\n", max_peak);
-    // int led_brightness = map(max_peak, 0, 15, 0, 255);
-    // FastLED.setBrightness(led_brightness);
-    // FastLED.show();
-  }
+    mean /= (float) SAMPLES;
+
+    Serial.printf("HOLY: %.2f %.2f %.2f | MEAN: %.2f\n", fft_input_buffer[0], fft_input_buffer[1], fft_input_buffer[2], mean);
+
+
+    // Serial.printf("HOLY: %ld\n", max);
+    
+    // mean = mean / 2048.0;
+    // Serial.printf("MEAN: %.3f\n", mean);
+  }   
 }
 
 
-void setup() {
 
+void setup() {
   Serial.begin(115200);
 
+  // LEDS
   FastLED.addLeds<WS2812B, LED_PIN, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(INIT_BRIGHTNESS);
   FastLED.clear(true);
   for (int i = 0; i < NUM_LEDS; i++) {
-    int rand = random8();
-    leds[i] = ColorFromPalette(greenblue, rand);
+      int rand = random8();
+      leds[i] = ColorFromPalette(purplePalette, rand);
   }
   FastLED.show();
 
-  static const i2s_config_t i2s_config {
-    .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN),
-    .sample_rate = 44100, // corrected by info from bluetooth
-    .bits_per_sample = (i2s_bits_per_sample_t) 16, /* the DAC module will only take the 8bits from MSB */
-    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-    .communication_format = (i2s_comm_format_t)I2S_COMM_FORMAT_STAND_MSB,
-    .intr_alloc_flags = 0, // default interrupt priority
-    .dma_buf_count = 8,
-    .dma_buf_len = 64,
-    .use_apll = false
+  // BLUETOOTH
+  i2s_pin_config_t my_pin_config = {
+    .bck_io_num = 18,
+    .ws_io_num = 19,
+    .data_out_num = 21,
+    .data_in_num = I2S_PIN_NO_CHANGE
   };
+
+  a2dp_sink.set_pin_config(my_pin_config);
+  a2dp_sink.start("SMARTLEDS");
+  a2dp_sink.set_stream_reader(read_data_stream);
+
+  // BUFFERS
+  int ring_buffer_size    = BUFFER_SIZE    * SAMPLES * sizeof(float);
+  int stream_buffer_trigger = BUFFER_TRIGGER * SAMPLES * sizeof(float);
+
+  sample_buffer = xRingbufferCreate(ring_buffer_size, RINGBUF_TYPE_NOSPLIT);
+  if( sample_buffer == NULL ) {
+    Serial.println("SAMPLE BUFFER NOT INITIALIZED");
+  } else {
+    Serial.println("SAMPLE BUFFER INITIALIZED");
+  }
+
+  blt_output_buffer = (float*) malloc(SAMPLES * sizeof(float));
+  fft_input_buffer  = (float*) malloc(SAMPLES * BUFFER_TRIGGER * sizeof(float));
 
   xTaskCreatePinnedToCore(
     calculateFFT,
@@ -120,27 +175,19 @@ void setup() {
     NULL,
     1
   );
-
-  sound_analyzer = new SoundAnalyzer();
-
-  tmp_buffer = (double*) malloc(TRIMMED_SAMPLES * sizeof(double));
-
-  int stream_size = TRIMMED_SAMPLES * BUFFER_SIZE * sizeof(double);
-  sample_buffer = xStreamBufferCreate(stream_size, stream_size);
-
-  if( sample_buffer == NULL ) {
-    Serial.println("SAMPLE BUFFER NOT INITIALIZED");
-  } else {
-    Serial.println("SAMPLE BUFFER INITIALIZED");
-  }
-
-  a2dp_sink.set_i2s_config(i2s_config);
-  a2dp_sink.start("JP-Bluetooth");
-  a2dp_sink.set_stream_reader(read_data_stream);
-
-  
 }
 
 void loop() {
+  fill_palette(leds, NUM_LEDS, idx, 255 / NUM_LEDS, purplePalette, 100, LINEARBLEND);
   
+  EVERY_N_MILLISECONDS(10){
+    idx++;
+  }
+  
+  EVERY_N_SECONDS(1) {
+    Serial.printf("                                                                                                      CONT: %d\n", cont);
+    cont = 0;
+  }
+
+  FastLED.show();
 }
