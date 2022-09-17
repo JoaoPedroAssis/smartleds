@@ -4,7 +4,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/stream_buffer.h>
 #include <freertos/ringbuf.h>
-#include "../include/FFT_Class.h"
+#include "../include/ESP32_fft.h"
 
 // LED settings
 #define NUM_LEDS 60
@@ -59,28 +59,23 @@ int cont = 0;
 RingbufHandle_t sample_buffer;
 float *blt_output_buffer, *fft_input_buffer;
 
+// FFT
+fft_config_t *real_fft_plan = fft_init(SAMPLES, FFT_REAL, FFT_FORWARD, NULL, NULL);
+
 
 void read_data_stream(const uint8_t *data, uint32_t length) {
-  // Serial.printf("UM PACOTE CHEGOU! SIZE: %d\n", length);
   cont++;
 
   int16_t *values = (int16_t*) data;
 
   int buff_idx = 0;
-  float mean = 0;
   size_t buffer_bytes_to_send = SAMPLES * sizeof(float);
   size_t bytes_sent;
   for (int i = 0; i < SAMPLES * 2; i+=2) {
     blt_output_buffer[buff_idx] = (values[i] + values[i+1]) /2.0f;
-    mean += blt_output_buffer[buff_idx];
     buff_idx++;
   }
 
-  mean /= (float) SAMPLES; 
-
-  Serial.printf("NUMERO: %.2f %.2f %.2f | MEAN: %.2f\n", blt_output_buffer[0], blt_output_buffer[1], blt_output_buffer[2], mean);
-
-  // Serial.printf("NUMERO: %.3f\n", max);
   UBaseType_t res =  xRingbufferSend(sample_buffer, blt_output_buffer, buffer_bytes_to_send, pdMS_TO_TICKS(1000));
   if (res != pdTRUE) {
     Serial.printf("                                       NAO ENVIOU!\n");
@@ -94,34 +89,24 @@ void calculateFFT(void *parameters) {
   size_t buffer_bytes_to_receive = SAMPLES * BUFFER_TRIGGER * sizeof(float);
 
   while (1) {
-    // bytes_received = xStreamBufferReceive(sample_buffer, fft_input_buffer, buffer_bytes_to_receive, portMAX_DELAY);
-    size_t tam;   
-    fft_input_buffer = (float *) xRingbufferReceive(sample_buffer, &tam, portMAX_DELAY);
+    size_t item_byte_size;   
+    fft_input_buffer = (float *) xRingbufferReceive(sample_buffer, &item_byte_size, portMAX_DELAY);
+
+    size_t item_size = item_byte_size / sizeof(float);
 
     //Check received item
     if (fft_input_buffer != NULL) {
       vRingbufferReturnItem(sample_buffer, (void *) fft_input_buffer);
-      Serial.printf("RECEBEU! | SIZE: %d\n", tam);
+      Serial.printf("RECEBEU! | SIZE: %d\n", item_size);
     } else {
         //Failed to receive item
         Serial.printf("NAO RECEBEU!\n");
         continue;
     }
 
-    float mean = 0;
-    for (int i = 0; i < SAMPLES; i++) {
-      mean += fft_input_buffer[i];
+    for (int i = 0; i < item_size; i++) {
+      real_fft_plan->input[i] += fft_input_buffer[i];
     }
-
-    mean /= (float) SAMPLES;
-
-    Serial.printf("HOLY: %.2f %.2f %.2f | MEAN: %.2f\n", fft_input_buffer[0], fft_input_buffer[1], fft_input_buffer[2], mean);
-
-
-    // Serial.printf("HOLY: %ld\n", max);
-    
-    // mean = mean / 2048.0;
-    // Serial.printf("MEAN: %.3f\n", mean);
   }   
 }
 
@@ -156,7 +141,9 @@ void setup() {
   int ring_buffer_size    = BUFFER_SIZE    * SAMPLES * sizeof(float);
   int stream_buffer_trigger = BUFFER_TRIGGER * SAMPLES * sizeof(float);
 
-  sample_buffer = xRingbufferCreate(ring_buffer_size, RINGBUF_TYPE_NOSPLIT);
+  // sample_buffer = xRingbufferCreate(ring_buffer_size, RINGBUF_TYPE_NOSPLIT);
+  sample_buffer = xRingbufferCreateNoSplit(SAMPLES * sizeof(float), BUFFER_SIZE);
+
   if( sample_buffer == NULL ) {
     Serial.println("SAMPLE BUFFER NOT INITIALIZED");
   } else {
