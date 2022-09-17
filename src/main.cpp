@@ -28,7 +28,7 @@
 
 // LED STUFF
 CRGB leds[NUM_LEDS];
-uint8_t idx;
+// uint8_t idx;
 CRGBPalette16 purplePalette = CRGBPalette16 (
     CRGB::DarkViolet,
     CRGB::DarkViolet,
@@ -78,9 +78,9 @@ void read_data_stream(const uint8_t *data, uint32_t length) {
 
   UBaseType_t res =  xRingbufferSend(sample_buffer, blt_output_buffer, buffer_bytes_to_send, pdMS_TO_TICKS(1000));
   if (res != pdTRUE) {
-    Serial.printf("                                       NAO ENVIOU!\n");
+    // Serial.printf("                                       NAO ENVIOU!\n");
   } else {
-    Serial.printf("ENVIOU!\n");
+    // Serial.printf("ENVIOU!\n");
   }
 }
 
@@ -97,17 +97,39 @@ void calculateFFT(void *parameters) {
     //Check received item
     if (fft_input_buffer != NULL) {
       vRingbufferReturnItem(sample_buffer, (void *) fft_input_buffer);
-      Serial.printf("RECEBEU! | SIZE: %d\n", item_size);
+      // Serial.printf("RECEBEU! | SIZE: %d\n", item_size);
     } else {
-        //Failed to receive item
-        Serial.printf("NAO RECEBEU!\n");
+        // //Failed to receive item
+        // Serial.printf("NAO RECEBEU!\n");
         continue;
     }
 
     for (int i = 0; i < item_size; i++) {
-      real_fft_plan->input[i] += fft_input_buffer[i];
+      real_fft_plan->input[i] = fft_input_buffer[i];
     }
-  }   
+
+    fft_execute(real_fft_plan);
+
+    float max_magnitude = 0;
+    int idx = 0;
+    for (int k = 1 ; k < real_fft_plan->size / 2 ; k++) {
+      float mag = sqrt(pow(real_fft_plan->output[2*k],2) + pow(real_fft_plan->output[2*k+1],2));
+      // Serial.printf("                                                       MAG: %.2f\n", mag);
+      
+      if(mag > max_magnitude) {
+        max_magnitude = mag;
+        idx = k;
+      }
+    }
+
+    Serial.printf("FFT NUMBER: %d\n", idx);
+
+    for (int i = 0; i < NUM_LEDS; i++) {
+      uint8_t noise = inoise8(i * idx + 15);
+      uint8_t hue = map(noise, 50, 190, 0, 255);
+      leds[i] = CHSV(hue, 255, 255);
+    }
+  }  
 }
 
 
@@ -165,11 +187,11 @@ void setup() {
 }
 
 void loop() {
-  fill_palette(leds, NUM_LEDS, idx, 255 / NUM_LEDS, purplePalette, 100, LINEARBLEND);
+  // fill_palette(leds, NUM_LEDS, idx, 255 / NUM_LEDS, purplePalette, 100, LINEARBLEND);
   
-  EVERY_N_MILLISECONDS(10){
-    idx++;
-  }
+  // EVERY_N_MILLISECONDS(10){
+  //   idx++;
+  // }
   
   EVERY_N_SECONDS(1) {
     Serial.printf("                                                                                                      CONT: %d\n", cont);
