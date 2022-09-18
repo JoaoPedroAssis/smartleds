@@ -51,6 +51,18 @@ CRGBPalette16 purplePalette = CRGBPalette16 (
     CRGB::Linen
 );
 
+DEFINE_GRADIENT_PALETTE ( sunset ) {
+  0  , 120 , 0  , 0,
+  22 , 179 , 22 , 0,
+  51 , 255 , 104, 0,
+  85 , 167 , 22 , 18,
+  135, 100 , 0  , 103,
+  198 , 16  , 0  , 130,
+  255 , 0 , 0, 160};
+
+CRGBPalette16 SunsetPallete = sunset;
+
+
 // BLUETOOTH STUFF
 BluetoothA2DPSink a2dp_sink;
 int cont = 0;
@@ -61,7 +73,49 @@ float *blt_output_buffer, *fft_input_buffer;
 
 // FFT
 fft_config_t *real_fft_plan = fft_init(SAMPLES, FFT_REAL, FFT_FORWARD, NULL, NULL);
+double bands[7] = {0,0,0,0,0,0,0};
+double fundamental_freq = (double) SAMPLING_FREQUENCY / (double) SAMPLES;
 
+
+int idx_to_band(int idx) {
+
+  if (idx <= 2)   return 0; // 60    Hz
+  if (idx <= 6)   return 1; // 250   Hz
+  if (idx <= 12)  return 2; // 500   Hz
+  if (idx <= 47)  return 3; // 2000  Hz
+  if (idx <= 93)  return 4; // 4000  Hz
+  if (idx <= 140) return 5; // 6000  Hz
+  if (idx <= 232) return 6; // 10000 Hz
+
+  return 6;
+}
+
+void min_max(double * array, size_t size, double * min, double * max) {
+
+  double ma = array[0];
+  double mi = array[0];
+
+  for (int i = 1; i < size; i++) {
+    if (array[i] > ma) {
+      ma = array[i];
+    } else if (array[i] < mi) {
+      mi = array[i];
+    }
+  }
+
+  *min = mi;
+  *max = ma;
+}
+
+double mapd(double x, double in_min, double in_max, double out_min, double out_max) {
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+void normalize(double * array, size_t size, double min, double max) {
+  for (int i = 0; i < size; i++) {
+    array[i] = mapd(array[i], min, max, 0, 1);
+  }
+}
 
 void read_data_stream(const uint8_t *data, uint32_t length) {
   cont++;
@@ -116,23 +170,41 @@ void calculateFFT(void *parameters) {
       float mag = sqrt(pow(real_fft_plan->output[2*k],2) + pow(real_fft_plan->output[2*k+1],2));
       // Serial.printf("                                                       MAG: %.2f\n", mag);
       
+      real_fft_plan->output[k] = mag;
+
       if(mag > max_magnitude) {
         max_magnitude = mag;
         idx = k;
       }
     }
 
-    Serial.printf("FFT NUMBER: %d\n", idx);
+    memset(bands, 0, 7 * sizeof(double));
+    for (int i = 0; i < 232; i++) {
+      bands[idx_to_band(i)] += 0.3 * real_fft_plan->output[i];
+    }
+
+    double min, max;
+
+    min_max(bands, 7, &min, &max);
+
+    normalize(bands, 7, min, max);
+
+    Serial.printf("ENERGY: ");
+    for (int i = 0; i < 7; i++) {
+      Serial.printf("%.3f ", bands[i]);
+    }
+    Serial.printf("\n");
 
     for (int i = 0; i < NUM_LEDS; i++) {
-      uint8_t noise = inoise8(i * idx + 15);
-      uint8_t hue = map(noise, 50, 190, 0, 255);
-      leds[i] = CHSV(hue, 255, 255);
+      // uint8_t noise = inoise8(i * idx + 15);
+      // uint8_t hue = map(noise, 50, 190, 0, 255);
+      idx = map(idx, 1, 511, 0, 5000);
+      uint8_t brightness = inoise8(i * 150, idx);
+      uint8_t index = inoise8(i * 20, idx);
+      leds[i] = ColorFromPalette(SunsetPallete, index, brightness);
     }
   }  
 }
-
-
 
 void setup() {
   Serial.begin(115200);
@@ -143,7 +215,7 @@ void setup() {
   FastLED.clear(true);
   for (int i = 0; i < NUM_LEDS; i++) {
       int rand = random8();
-      leds[i] = ColorFromPalette(purplePalette, rand);
+      leds[i] = ColorFromPalette(SunsetPallete, rand);
   }
   FastLED.show();
 
