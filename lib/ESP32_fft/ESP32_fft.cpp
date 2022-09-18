@@ -195,7 +195,7 @@ void rfft(float *x, float *y, float *twiddle_factors, int n)
   int k;
   for (k = 2 ; k < n / 2 ; k += 2)
   {
-    float xer, xei, xor, xoi, c, s, tr, ti;
+    float xer, xei, xorr, xoi, c, s, tr, ti;
 
     c = twiddle_factors[k];
     s = twiddle_factors[k+1];
@@ -205,11 +205,11 @@ void rfft(float *x, float *y, float *twiddle_factors, int n)
     xei = 0.5 * (y[k+1] - y[n-k+1]);
 
     // odd half coefficient
-    xor = 0.5 * (y[k+1] + y[n-k+1]);
+    xorr = 0.5 * (y[k+1] + y[n-k+1]);
     xoi = - 0.5 * (y[k] - y[n-k]);
 
-    tr =  c * xor + s * xoi;
-    ti = -s * xor + c * xoi;
+    tr =  c * xorr + s * xoi;
+    ti = -s * xorr + c * xoi;
 
     y[k]   = xer + tr;
     y[k+1] = xei + ti;
@@ -235,7 +235,7 @@ void irfft(float *x, float *y, float *twiddle_factors, int n)
 
   for (k = 2 ; k < n / 2 ; k += 2)
   {
-    float xer, xei, xor, xoi, c, s, tr, ti;
+    float xer, xei, xorr, xoi, c, s, tr, ti;
 
     c = twiddle_factors[k];
     s = twiddle_factors[k+1];
@@ -246,14 +246,14 @@ void irfft(float *x, float *y, float *twiddle_factors, int n)
     xei = 0.5 * (x[k+1] - x[n-k+1]);
     ti  = 0.5 * (x[k+1] + x[n-k+1]);
 
-    xor = c * tr - s * ti;
+    xorr = c * tr - s * ti;
     xoi = s * tr + c * ti;
 
     x[k]   = xer - xoi;
-    x[k+1] = xor + xei;
+    x[k+1] = xorr + xei;
 
     x[n-k]   = xer + xoi;
-    x[n-k+1] = xor - xei;
+    x[n-k+1] = xorr - xei;
   }
 
   ifft_primitive(x, y, n / 2, 2, twiddle_factors, 4);
