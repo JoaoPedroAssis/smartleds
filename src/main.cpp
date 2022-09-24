@@ -12,11 +12,23 @@
 #define NUM_LEDS 60
 #define LED_PIN 32
 #define INIT_BRIGHTNESS 100
+#define BASS_LEDS 15
 
 // StreamBuffer
 #define BUFFER_SIZE 4
 #define BUFFER_SLOT 128
 #define BUFFER_TRIGGER 1
+
+// Bands
+enum Bands {
+  SUB_BASS,
+  BASS,
+  LOWER_MID,
+  MID,
+  HIGH_MID,
+  PRESENCE,
+  BRILLIANCE,
+};
 
 
 /* --------- VARIABLES ----------- */
@@ -112,21 +124,31 @@ void calculateFFT(void *parameters) {
 
     sound_analyzer->set_data(fft_input_buffer, item_byte_size);
     double * bands = sound_analyzer->get_bands();
+    int peak_idx = sound_analyzer->major_peak_idx();
 
-    Serial.printf("ENERGY: ");
-    for (int i = 0; i < 7; i++) {
-      Serial.printf("%.3f ", bands[i]);
+    double bass = bands[BASS];
+    
+    int draw_bass = (int) sound_analyzer->mapd(bass, 0.0, 1.0, 0.0, 14.0);
+
+    if (draw_bass > 14) {
+      continue;
     }
-    Serial.printf("\n");
 
-    // for (int i = 0; i < NUM_LEDS; i++) {
-    //   // uint8_t noise = inoise8(i * idx + 15);
-    //   // uint8_t hue = map(noise, 50, 190, 0, 255);
-    //   idx = map(idx, 1, 511, 0, 5000);
-    //   uint8_t brightness = inoise8(i * 150, idx);
-    //   uint8_t index = inoise8(i * 20, idx);
-    //   leds[i] = ColorFromPalette(SunsetPallete, index, brightness);
-    // }
+    uint16_t t = millis() / 5;
+    int scale = beatsin8(10, 10, 30);
+
+    for (int i = 0; i < NUM_LEDS; i++) {
+      uint8_t noise = inoise8(i * scale + peak_idx, t);
+      uint8_t hue = map(noise, 50, 190, 0, 255);
+      leds[i] = CHSV(hue, 255, 255);
+    }
+
+    fill_noise16(leds, NUM_LEDS, 1, 0, peak_idx, 1, 0, peak_idx, t, 5 );
+
+    for (int i = 0; i < draw_bass; i++) {
+      leds[i] = CRGB::Red;
+    }
+    FastLED.show();
   }  
 }
 
@@ -138,22 +160,25 @@ void setup() {
   FastLED.setBrightness(INIT_BRIGHTNESS);
   FastLED.clear(true);
   for (int i = 0; i < NUM_LEDS; i++) {
-      int rand = random8();
-      leds[i] = ColorFromPalette(SunsetPallete, rand);
+      leds[i] = ColorFromPalette(SunsetPallete, i);
   }
   FastLED.show();
 
-  // BLUETOOTH
-  i2s_pin_config_t my_pin_config = {
-    .bck_io_num = 18,
-    .ws_io_num = 19,
-    .data_out_num = 21,
-    .data_in_num = I2S_PIN_NO_CHANGE
+  static const i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX),
+    .sample_rate = 44100,
+    .bits_per_sample = (i2s_bits_per_sample_t) 16,
+    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = 0, // default interrupt priority
+    .dma_buf_count = 8,
+    .dma_buf_len = 64,
+    .use_apll = false
   };
 
-  a2dp_sink.set_pin_config(my_pin_config);
+  a2dp_sink.set_i2s_config(i2s_config);
+  a2dp_sink.set_stream_reader(read_data_stream, true);
   a2dp_sink.start("SMARTLEDS");
-  a2dp_sink.set_stream_reader(read_data_stream);
 
   // BUFFERS
   int ring_buffer_size    = BUFFER_SIZE    * SAMPLES * sizeof(float);
@@ -189,10 +214,10 @@ void loop() {
   //   idx++;
   // }
   
-  EVERY_N_SECONDS(1) {
-    Serial.printf("                                                                                                      CONT: %d\n", cont);
-    cont = 0;
-  }
-
-  FastLED.show();
+  // EVERY_N_SECONDS(1) {
+  //   Serial.printf("                                                                                                      CONT: %d\n", cont);
+  //   cont = 0;
+  // }
+  vTaskDelete(NULL);
+  
 }
