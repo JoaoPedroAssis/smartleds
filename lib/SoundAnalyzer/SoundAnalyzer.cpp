@@ -14,6 +14,9 @@ void SoundAnalyzer::set_data(const float* sample_data, size_t byte_size) {
 }
 
 void SoundAnalyzer::clear_data() {
+    max_mag = 0;
+    fundamental_freq = 0;
+    peak_idx = 0;
     memset(bands, 0, sizeof_bands);
 }
 
@@ -36,6 +39,7 @@ void SoundAnalyzer::complex_to_magnitude() {
         if(mag > max_mag) {
             max_mag = mag;
             fundamental_freq = freq;
+            peak_idx = k;
         }
         real_fft->output[k] = mag;
     }
@@ -43,9 +47,8 @@ void SoundAnalyzer::complex_to_magnitude() {
 
 double * SoundAnalyzer::get_bands() {
     
-    FFT();
-
     clear_data();
+    FFT();
 
     for (int i = 0; i < frequency_cutoff_idx; i++) {
       bands[idx_to_band(i)] += scale_magnitude * real_fft->output[i];
