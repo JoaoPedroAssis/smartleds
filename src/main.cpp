@@ -35,7 +35,8 @@ enum Bands {
 
 // LED STUFF
 CRGB leds[NUM_LEDS];
-// uint8_t idx;
+CRGB dots[NUM_LEDS];
+
 CRGBPalette16 purplePalette = CRGBPalette16 (
     CRGB::DarkViolet,
     CRGB::DarkViolet,
@@ -58,6 +59,19 @@ CRGBPalette16 purplePalette = CRGBPalette16 (
     CRGB::Linen
 );
 
+DEFINE_GRADIENT_PALETTE( green ) {
+    0,   1, 22,  1,
+  130,   1,168,  2,
+  255,   1, 22,  1};
+
+
+DEFINE_GRADIENT_PALETTE( purple ) {
+    0,   2,  1,  8,
+   94,  79,  2,212,
+  140, 110, 11,197,
+  255,   2,  1,  8};
+
+
 DEFINE_GRADIENT_PALETTE ( sunset ) {
   0  , 120 , 0  , 0,
   22 , 179 , 22 , 0,
@@ -68,6 +82,10 @@ DEFINE_GRADIENT_PALETTE ( sunset ) {
   255 , 0 , 0, 160};
 
 CRGBPalette16 SunsetPallete = sunset;
+CRGBPalette16 PurplePallete = purple;
+CRGBPalette16 GreenPallete  = green;
+
+
 
 
 // BLUETOOTH STUFF
@@ -127,7 +145,16 @@ void calculateFFT(void *parameters) {
     int peak_idx = sound_analyzer->major_peak_idx();
 
     double bass = bands[BASS];
+    double high_medium = bands[HIGH_MID];
+    double presence = bands[PRESENCE];
+    double brilliance = bands[BRILLIANCE];
+
+
+    int hm_value = (int) sound_analyzer->mapd(high_medium, 0.0, 1.0, 0.0, 100.0);
+    int p_value = (int) sound_analyzer->mapd(presence, 0.0, 1.0, 0.0, 100.0);
+    int b_value = (int) sound_analyzer->mapd(brilliance, 0.0, 1.0, 0.0, 100.0);
     
+
     int draw_bass = (int) sound_analyzer->mapd(bass, 0.0, 1.0, 0.0, 14.0);
 
     if (draw_bass > 14) {
@@ -135,19 +162,30 @@ void calculateFFT(void *parameters) {
     }
 
     uint16_t t = millis() / 5;
-    int scale = beatsin8(10, 10, 30);
-
-    for (int i = 0; i < NUM_LEDS; i++) {
-      uint8_t noise = inoise8(i * scale + peak_idx, t);
-      uint8_t hue = map(noise, 50, 190, 0, 255);
-      leds[i] = CHSV(hue, 255, 255);
-    }
-
     fill_noise16(leds, NUM_LEDS, 1, 0, peak_idx, 1, 0, peak_idx, t, 5 );
 
     for (int i = 0; i < draw_bass; i++) {
       leds[i] = CRGB::Red;
+
+      leds[NUM_LEDS - 1 - i] = CRGB::Red;
     }
+
+    if (b_value > 70) {
+      dots[random8(BASS_LEDS, NUM_LEDS - BASS_LEDS)] = CRGB::WhiteSmoke;
+    } else if (p_value > 75) {
+      dots[random8(BASS_LEDS, NUM_LEDS - BASS_LEDS)] = CRGB::WhiteSmoke;
+    } else if (hm_value > 75) {
+      dots[random8(BASS_LEDS, NUM_LEDS - BASS_LEDS)] = CRGB::WhiteSmoke;
+    }
+    
+    for (int i = BASS_LEDS; i < NUM_LEDS - BASS_LEDS; i++) {
+      if (dots[i] != CRGB(0, 0, 0)) {
+        leds[i] = dots[i];
+      }
+    }
+
+    fadeToBlackBy(dots, NUM_LEDS, 25);
+
     FastLED.show();
   }  
 }
@@ -162,6 +200,7 @@ void setup() {
   for (int i = 0; i < NUM_LEDS; i++) {
       leds[i] = ColorFromPalette(SunsetPallete, i);
   }
+  fill_solid(dots, NUM_LEDS, CRGB::Black);
   FastLED.show();
 
   static const i2s_config_t i2s_config = {
@@ -208,16 +247,5 @@ void setup() {
 }
 
 void loop() {
-  // fill_palette(leds, NUM_LEDS, idx, 255 / NUM_LEDS, purplePalette, 100, LINEARBLEND);
-  
-  // EVERY_N_MILLISECONDS(10){
-  //   idx++;
-  // }
-  
-  // EVERY_N_SECONDS(1) {
-  //   Serial.printf("                                                                                                      CONT: %d\n", cont);
-  //   cont = 0;
-  // }
   vTaskDelete(NULL);
-  
 }
